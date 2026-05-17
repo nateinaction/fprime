@@ -115,33 +115,16 @@ void TcDeframer ::dataIn_handler(FwIndexType portNum, Fw::Buffer& data, const Co
     if (this->isConnected_processSecurityOut_OutputPort(0)) {
         data.setSize(total_frame_length - TCTrailer::SERIALIZED_SIZE);
 
-        // Ccsds::GVCID gvcid;
-        // gvcid.set_tfvn(0);  // TC always uses TFVN 0 (CCSDS 232.0-B-4 §4.1.2.2.2 Note 1)
-        // gvcid.set_scid(spacecraft_id);
-        // gvcid.set_vcid(vc_id);
-
         U16 globalVcId = static_cast<U16>((0 << 14) | (spacecraft_id & 0x3FF) << 4 | (vc_id & 0x7) << 1);   // TFVN=0 | top 10 bits of SCID | top 3 bits of VCID | OCF=0
         U16 globalMapId = static_cast<U16>((0 << 14) | (spacecraft_id & 0x3FF) << 4 | (vc_id & 0x7) << 1);  // TFVN=0 | top 10 bits of SCID | top 3 bits of VCID | GMAPID=0
 
-        Ccsds::ProcessSecurityResult result = this->processSecurityOut_out(globalVcId, globalMapId, data);
+        Ccsds::ProcessSecurityResult result = this->processSecurityOut_out(0, globalVcId, globalMapId, data);
         if (result.get_status() == Ccsds::VerificationStatus::FAILURE) {
-            this->log_WARNING_HI_SecurityInternalError(result.get_statusCode());
+            this->log_WARNING_LO_SecurityError(result.get_statusCode());
             this->dataReturnOut_out(0, data, context);
             return;
         }
-
-        // const FwSizeType offset = result.get_returnOffset();
-        // const FwSizeType size = result.get_returnSize();
-        // if ((offset > payloadSize) || (size > (payloadSize - offset))) {
-        //     this->logSecurityFailure(Ccsds::VerificationStatusCode::INTERNAL_ERROR, spacecraft_id, vc_id);
-        //     this->dataReturnOut_out(0, data, context);
-        //     return;
-        // }
-
-        // data.setData(data.getData() + offset);
-        // data.setSize(static_cast<Fw::Buffer::SizeType>(size));
     } else {
-        // Legacy: strip primary header and FECF
         data.setData(data.getData() + TCHeader::SERIALIZED_SIZE);
         data.setSize(total_frame_length - TCHeader::SERIALIZED_SIZE - TCTrailer::SERIALIZED_SIZE);
     }

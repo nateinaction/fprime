@@ -8,14 +8,18 @@ module Ccsds {
         @ Port to notify of a deframing error
         output port errorNotify: Ccsds.ErrorNotify
 
+        @ Deframing received a malformed packet
+        event InvalidPacket() \
+            severity warning low \
+            format "Malformed packet received refusing to deframe"
+
         @ Synchronous ProcessSecurity call (CCSDS 355.0-B-2 §3.3, TC). When
         @ connected, the provider authenticates the frame and returns the
         @ cleared Data Field slice. When unconnected, the deframer falls back
         @ to its legacy behavior: strip Primary Header + FECF and forward.
         output port processSecurityOut: Ccsds.ProcessSecurity
 
-        @ Notification of a security verification failure. Optional; only
-        @ fired if connected.
+        @ Port to notify of a security verification failure
         output port securityErrorNotify: Ccsds.SecurityErrorNotify
 
         @ Deframing received an invalid SCID
@@ -38,29 +42,9 @@ module Ccsds {
             severity warning high \
             format "Invalid checksum received. Trailer specified: {} | Computed on board: {}"
 
-        # @ Security verification recieved an invalid SPI
-        # event SecurityInvalidSpi(transmitted: U16) \
-        #     severity warning high \
-        #     format "Invalid Security Parameter Index received. SPI specified: {}"
-
-        # @ Security verification received an mismatched MAC
-        # event SecurityMacFailure(transmitted: Mac) \
-        #     severity warning high \
-        #     format "Invalid Message Authentication Code received. MAC specified: {}"
-
-        # @ Security verification received a replayed sequence number
-        # event SecurityAntiReplayFailure(transmitted: U32, expected: U32) \
-        #     severity warning high \
-        #     format "Anti-replay sequence number reuse detected. Received: {} | Expected: {}"
-
-        # @ Security verification received a padding error
-        # event SecurityPaddingError() \
-        #     severity warning high \
-        #     format "Invalid padding received."
-
         @ Security verification encountered an internal error
         event SecurityError(statusCode: U8) \
-            severity warning high \
+            severity warning low \
             format "Error during security verification. Status code: {}"
 
         ###############################################################################
