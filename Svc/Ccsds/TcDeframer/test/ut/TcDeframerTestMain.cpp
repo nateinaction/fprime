@@ -36,6 +36,41 @@ TEST(TcDeframer, testInvalidCrc) {
     tester.testInvalidCrc();
 }
 
+TEST(TcDeframer, testSecurityAcceptForwardsReturnSlice) {
+    Svc::Ccsds::TcDeframerTester tester;
+    tester.testSecurityAcceptForwardsReturnSlice();
+}
+
+TEST(TcDeframer, testSecurityInvalidSpiRejects) {
+    Svc::Ccsds::TcDeframerTester tester;
+    tester.testSecurityInvalidSpiRejects();
+}
+
+TEST(TcDeframer, testSecurityMacFailureRejects) {
+    Svc::Ccsds::TcDeframerTester tester;
+    tester.testSecurityMacFailureRejects();
+}
+
+TEST(TcDeframer, testSecurityAntiReplayRejects) {
+    Svc::Ccsds::TcDeframerTester tester;
+    tester.testSecurityAntiReplayRejects();
+}
+
+TEST(TcDeframer, testSecurityPaddingErrorRejects) {
+    Svc::Ccsds::TcDeframerTester tester;
+    tester.testSecurityPaddingErrorRejects();
+}
+
+TEST(TcDeframer, testSecurityOutOfBoundsReturnSliceTriggersInternalError) {
+    Svc::Ccsds::TcDeframerTester tester;
+    tester.testSecurityOutOfBoundsReturnSliceTriggersInternalError();
+}
+
+TEST(TcDeframer, testSecurityGvcidPopulated) {
+    Svc::Ccsds::TcDeframerTester tester;
+    tester.testSecurityGvcidPopulated();
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

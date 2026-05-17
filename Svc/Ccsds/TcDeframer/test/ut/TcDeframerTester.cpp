@@ -27,6 +27,47 @@ TcDeframerTester ::TcDeframerTester()
 TcDeframerTester ::~TcDeframerTester() {}
 
 // ----------------------------------------------------------------------
+// Scripted ProcessSecurity provider
+// ----------------------------------------------------------------------
+
+Ccsds::ProcessSecurityResult TcDeframerTester::from_processSecurityOut_handler(
+    FwIndexType /*portNum*/,
+    const Ccsds::GVCID& gvcid,
+    Fw::Buffer& payload) {
+    this->m_capturedGvcid = gvcid;
+    this->m_capturedPayloadSize = static_cast<FwSizeType>(payload.getSize());
+    this->m_providerCalls++;
+
+    if (this->m_securityMode == SecurityMode::kPassthrough) {
+        // Emulate the legacy strip behavior so framer tests pass unchanged.
+        Ccsds::ProcessSecurityResult r;
+        r.set_status(Ccsds::VerificationStatus::NO_FAILURE);
+        r.set_statusCode(Ccsds::VerificationStatusCode::NONE);
+        r.set_returnOffset(static_cast<FwSizeType>(TCHeader::SERIALIZED_SIZE));
+        r.set_returnSize(static_cast<FwSizeType>(payload.getSize()) -
+                         static_cast<FwSizeType>(TCHeader::SERIALIZED_SIZE));
+        return r;
+    }
+    return this->m_scriptedSecurityResult;
+}
+
+void TcDeframerTester::scriptSecurityAccept(FwSizeType returnOffset, FwSizeType returnSize) {
+    this->m_securityMode = SecurityMode::kScripted;
+    this->m_scriptedSecurityResult.set_status(Ccsds::VerificationStatus::NO_FAILURE);
+    this->m_scriptedSecurityResult.set_statusCode(Ccsds::VerificationStatusCode::NONE);
+    this->m_scriptedSecurityResult.set_returnOffset(returnOffset);
+    this->m_scriptedSecurityResult.set_returnSize(returnSize);
+}
+
+void TcDeframerTester::scriptSecurityFailure(Ccsds::VerificationStatusCode::T code) {
+    this->m_securityMode = SecurityMode::kScripted;
+    this->m_scriptedSecurityResult.set_status(Ccsds::VerificationStatus::FAILURE);
+    this->m_scriptedSecurityResult.set_statusCode(code);
+    this->m_scriptedSecurityResult.set_returnOffset(0);
+    this->m_scriptedSecurityResult.set_returnSize(0);
+}
+
+// ----------------------------------------------------------------------
 // Tests
 // ----------------------------------------------------------------------
 
@@ -164,6 +205,141 @@ void TcDeframerTester::testInvalidCrc() {
     ASSERT_EQ(this->fromPortHistory_dataReturnOut->at(0).data.getSize(), buffer.getSize());
     ASSERT_EVENTS_SIZE(1);  // exactly 1 event emitted
     ASSERT_EVENTS_InvalidCrc_SIZE(1);
+}
+
+// ----------------------------------------------------------------------
+// Security path tests
+// ----------------------------------------------------------------------
+
+void TcDeframerTester::testSecurityAcceptForwardsReturnSlice() {
+    const U8 payloadLength = 32;
+    U8 payload[payloadLength];
+    for (U8 i = 0; i < payloadLength; i++) {
+        payload[i] = static_cast<U8>(i + 1);
+    }
+    Fw::Buffer buffer = this->assembleFrameBuffer(payload, payloadLength);
+    ComCfg::FrameContext nullContext;
+
+    this->setComponentState();
+
+    // Provider strips Primary Header (5B) AND an extra 4-byte simulated security
+    // header to make the slice distinguishable from the legacy strip path.
+    const FwSizeType simulatedSecHeader = 4;
+    this->scriptSecurityAccept(
+        /*returnOffset=*/static_cast<FwSizeType>(TCHeader::SERIALIZED_SIZE) + simulatedSecHeader,
+        /*returnSize=*/payloadLength - simulatedSecHeader);
+    this->invoke_to_dataIn(0, buffer, nullContext);
+
+    ASSERT_from_dataOut_SIZE(1);
+    ASSERT_EQ(this->m_providerCalls, 1u);
+    Fw::Buffer outBuffer = this->fromPortHistory_dataOut->at(0).data;
+    ASSERT_EQ(outBuffer.getSize(),
+              static_cast<Fw::Buffer::SizeType>(payloadLength - simulatedSecHeader));
+    // outBuffer should start at payload[simulatedSecHeader] from the original data
+    for (FwIndexType i = 0; i < (payloadLength - simulatedSecHeader); i++) {
+        ASSERT_EQ(outBuffer.getData()[i], payload[simulatedSecHeader + i]);
+    }
+}
+
+void TcDeframerTester::testSecurityInvalidSpiRejects() {
+    const U8 payloadLength = 16;
+    U8 payload[payloadLength] = {};
+    Fw::Buffer buffer = this->assembleFrameBuffer(payload, payloadLength);
+    ComCfg::FrameContext nullContext;
+
+    this->setComponentState();
+    this->scriptSecurityFailure(Ccsds::VerificationStatusCode::INVALID_SPI);
+    this->invoke_to_dataIn(0, buffer, nullContext);
+
+    ASSERT_from_dataOut_SIZE(0);
+    ASSERT_from_dataReturnOut_SIZE(1);
+    ASSERT_from_securityErrorNotify_SIZE(1);
+    ASSERT_from_securityErrorNotify(0, Ccsds::SecurityError::SEC_INVALID_SPI);
+    ASSERT_EVENTS_SecurityInvalidSpi_SIZE(1);
+}
+
+void TcDeframerTester::testSecurityMacFailureRejects() {
+    const U8 payloadLength = 16;
+    U8 payload[payloadLength] = {};
+    Fw::Buffer buffer = this->assembleFrameBuffer(payload, payloadLength);
+    ComCfg::FrameContext nullContext;
+
+    this->setComponentState();
+    this->scriptSecurityFailure(Ccsds::VerificationStatusCode::MAC_VERIFICATION_FAILURE);
+    this->invoke_to_dataIn(0, buffer, nullContext);
+
+    ASSERT_from_dataOut_SIZE(0);
+    ASSERT_from_dataReturnOut_SIZE(1);
+    ASSERT_from_securityErrorNotify(0, Ccsds::SecurityError::SEC_MAC_FAILURE);
+    ASSERT_EVENTS_SecurityMacFailure_SIZE(1);
+}
+
+void TcDeframerTester::testSecurityAntiReplayRejects() {
+    const U8 payloadLength = 16;
+    U8 payload[payloadLength] = {};
+    Fw::Buffer buffer = this->assembleFrameBuffer(payload, payloadLength);
+    ComCfg::FrameContext nullContext;
+
+    this->setComponentState();
+    this->scriptSecurityFailure(Ccsds::VerificationStatusCode::ANTI_REPLAY_SEQUENCE_FAILURE);
+    this->invoke_to_dataIn(0, buffer, nullContext);
+
+    ASSERT_from_dataReturnOut_SIZE(1);
+    ASSERT_from_securityErrorNotify(0, Ccsds::SecurityError::SEC_ANTI_REPLAY_FAILURE);
+    ASSERT_EVENTS_SecurityAntiReplayFailure_SIZE(1);
+}
+
+void TcDeframerTester::testSecurityPaddingErrorRejects() {
+    const U8 payloadLength = 16;
+    U8 payload[payloadLength] = {};
+    Fw::Buffer buffer = this->assembleFrameBuffer(payload, payloadLength);
+    ComCfg::FrameContext nullContext;
+
+    this->setComponentState();
+    this->scriptSecurityFailure(Ccsds::VerificationStatusCode::PADDING_ERROR);
+    this->invoke_to_dataIn(0, buffer, nullContext);
+
+    ASSERT_from_dataReturnOut_SIZE(1);
+    ASSERT_from_securityErrorNotify(0, Ccsds::SecurityError::SEC_PADDING_ERROR);
+    ASSERT_EVENTS_SecurityPaddingError_SIZE(1);
+}
+
+void TcDeframerTester::testSecurityOutOfBoundsReturnSliceTriggersInternalError() {
+    const U8 payloadLength = 16;
+    U8 payload[payloadLength] = {};
+    Fw::Buffer buffer = this->assembleFrameBuffer(payload, payloadLength);
+    ComCfg::FrameContext nullContext;
+
+    this->setComponentState();
+    // NO_FAILURE but returnOffset + returnSize > payload size (header + data)
+    this->scriptSecurityAccept(/*offset=*/0, /*size=*/static_cast<FwSizeType>(buffer.getSize()) + 100);
+    this->invoke_to_dataIn(0, buffer, nullContext);
+
+    ASSERT_from_dataOut_SIZE(0);
+    ASSERT_from_dataReturnOut_SIZE(1);
+    ASSERT_EVENTS_SecurityInternalError_SIZE(1);
+    ASSERT_from_securityErrorNotify(0, Ccsds::SecurityError::SEC_INTERNAL_ERROR);
+}
+
+void TcDeframerTester::testSecurityGvcidPopulated() {
+    const U16 scId = 0x123;
+    const U8 vcId = 17;
+    const U8 payloadLength = 16;
+    U8 payload[payloadLength] = {};
+    Fw::Buffer buffer = this->assembleFrameBuffer(payload, payloadLength, scId, vcId);
+    ComCfg::FrameContext nullContext;
+
+    this->setComponentState(scId, vcId, /*seq=*/0, /*acceptAllVcid=*/true);
+    // Default passthrough mode is fine — we just need the call to happen.
+    this->invoke_to_dataIn(0, buffer, nullContext);
+
+    ASSERT_EQ(this->m_providerCalls, 1u);
+    ASSERT_EQ(this->m_capturedGvcid.get_tfvn(), 0);
+    ASSERT_EQ(this->m_capturedGvcid.get_scid(), scId);
+    ASSERT_EQ(this->m_capturedGvcid.get_vcid(), vcId);
+    // Payload passed to provider is full frame minus FECF.
+    ASSERT_EQ(this->m_capturedPayloadSize,
+              static_cast<FwSizeType>(TCHeader::SERIALIZED_SIZE) + payloadLength);
 }
 
 void TcDeframerTester::setComponentState(U16 scid, U8 vcid, U8 sequenceNumber, bool acceptAllVcid) {

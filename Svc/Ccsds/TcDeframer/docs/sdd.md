@@ -29,6 +29,8 @@ void configure(U16 vcId, U16 spacecraftId, bool acceptAllVcid);
 | Output | dataReturnOut | Svc.ComDataWithContext | Port for returning ownership of received buffers to deframe |
 | Input (sync) | dataReturnIn | Svc.ComDataWithContext | Port receiving back ownership of sent buffers |
 | Output | errorNotify | Ccsds.ErrorNotify | Port to send notification of deframing errors |
+| Output | processSecurityOut | Ccsds.ProcessSecurity | Optional synchronous ProcessSecurity call (CCSDS 355.0-B-2 §3.3); when connected the deframer authenticates frames via the connected provider |
+| Output | securityErrorNotify | Ccsds.SecurityErrorNotify | Port to send notification of security verification failures |
 
 ## Events
 
@@ -38,6 +40,32 @@ void configure(U16 vcId, U16 spacecraftId, bool acceptAllVcid);
 | InvalidFrameLength | `warning high` | Deframing received an invalid frame length |
 | InvalidVcId | `activity low` | Deframing received an invalid VCID |
 | InvalidCrc | `warning high` | Deframing received an invalid checksum |
+| SecurityInvalidSpi | `warning high` | ProcessSecurity provider reported `INVALID_SPI` |
+| SecurityMacFailure | `warning high` | ProcessSecurity provider reported `MAC_VERIFICATION_FAILURE` |
+| SecurityAntiReplayFailure | `warning high` | ProcessSecurity provider reported `ANTI_REPLAY_SEQUENCE_FAILURE` |
+| SecurityPaddingError | `warning high` | ProcessSecurity provider reported `PADDING_ERROR` |
+| SecurityInternalError | `warning high` | ProcessSecurity provider reported `INTERNAL_ERROR`, an unknown status, or an out-of-bounds return slice |
+
+## Security (CCSDS 355.0-B-2 §3.3 ProcessSecurity)
+
+The TcDeframer optionally performs the TC ProcessSecurity flow as defined by [CCSDS 355.0-B-2](https://ccsds.org/Pubs/355x0b2.pdf). Security is enabled by wiring a provider component (typically [`Svc::Ccsds::SAManager`](../../SAManager/docs/sdd.md)) to the `processSecurityOut` port. Security is **disabled** simply by leaving the port unconnected — in that case the deframer falls through to its legacy behavior of stripping the Primary Header and FECF and forwarding the Data Field unchanged. The unconnected path produces no events and no notifications; it is silent.
+
+### When `processSecurityOut` is connected
+
+After the FECF check passes, TcDeframer constructs a `Ccsds::GVCID` from the configured Spacecraft ID, the parsed Virtual Channel ID, and TFVN = 0 (the only value defined for TC per [CCSDS 232.0-B-4 §4.1.2.2](https://ccsds.org/Pubs/232x0b4e1c1.pdf)). It then calls the provider synchronously with the full Transfer Frame **minus the FECF**, matching the spec definition of the TC ProcessSecurity Payload (Primary Header through Security Trailer, §3.3.2.3).
+
+The provider returns a `ProcessSecurityResult` containing:
+
+- `status`: `NO_FAILURE` or `FAILURE`.
+- `statusCode`: one of `NONE`, `INVALID_SPI`, `MAC_VERIFICATION_FAILURE`, `ANTI_REPLAY_SEQUENCE_FAILURE`, `PADDING_ERROR`, `INTERNAL_ERROR`.
+- `returnOffset`/`returnSize`: byte offset and size within the payload buffer that locate the cleared Data Field — the "ProcessSecurity Return" per §3.3.3.3.
+
+On `NO_FAILURE`, TcDeframer bounds-checks the returned slice and forwards a buffer pointing at it on `dataOut`. On `FAILURE` (or out-of-bounds slice), the deframer logs the matching `Security*` event, fires `securityErrorNotify` if connected, and returns the buffer upstream via `dataReturnOut`.
+
+### Limitations / future work
+
+- **No GMAP_ID**: segment headers are not yet supported upstream (Type-BD frames only); when segment-header support lands, the `ProcessSecurity` port and `GVCID` type can be extended to carry GMAP_ID.
+- **TC only**: TM, AOS, and USLP ProcessSecurity will be separate components/flows; the shared `Ccsds.ProcessSecurity` port and result types are reusable for those.
 
 ## Requirements
 
@@ -53,3 +81,6 @@ void configure(U16 vcId, U16 spacecraftId, bool acceptAllVcid);
 | SVC-CCSDS-TC-DEFRAMER-008 | The TcDeframer shall log an `InvalidCrc` event if a frame fails the CRC check. | Unit Test |
 | SVC-CCSDS-TC-DEFRAMER-009 | The TcDeframer shall provide an input port (`dataIn`) to receive framed data, and emit deframed data packets on its `dataOut` output port. | Unit Test |
 | SVC-CCSDS-TC-DEFRAMER-010 | The TcDeframer shall emit notifications on its `errorNotify` port when deframing errors occur. | Unit Test |
+| SVC-CCSDS-TC-DEFRAMER-011 | When `processSecurityOut` is connected, the TcDeframer shall invoke the connected provider with the full Transfer Frame minus the FECF per CCSDS 355.0-B-2 §3.3.2.3, and on `NO_FAILURE` shall forward the slice indicated by `returnOffset`/`returnSize`. | Unit Test |
+| SVC-CCSDS-TC-DEFRAMER-012 | When `processSecurityOut` is unconnected, the TcDeframer shall fall back to its legacy behavior (strip Primary Header + FECF and forward) without emitting any security event or notification. | Inspection |
+| SVC-CCSDS-TC-DEFRAMER-013 | The TcDeframer shall log a `Security*` event matching the `VerificationStatusCode` returned by the provider on `FAILURE`, and shall fire `securityErrorNotify` with the matching `SecurityError` if connected. | Unit Test |

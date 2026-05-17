@@ -213,5 +213,65 @@ module Ccsds {
         INVALID_UNINITIALIZED         = 0x4  @< Anything equal or higher value is invalid and should not be used
     } default INVALID_UNINITIALIZED
 
+
+    # ------------------------------------------------
+    # Security (CCSDS 355.0-B-2)
+    # ------------------------------------------------
+
+    @ Input to ProcessSecurity port (CCSDS 355.0-B-2 §3.3.2).
+    @ TODO(nateinaction): What is the OCF flag that's not in the spec for vcid?
+    struct ProcessSecurityInput {
+        # payload: Fw.Buffer  @< The Transfer Frame from the first octet of the Transfer Frame Primary Header to the last octet of the Security Trailer, if present, or the last octet of the Transfer Frame Data Field, if the Security Trailer is not present (CCSDS 355.0-B-2 §3.3.2.3)
+        globalVcId: U16     @< 2 bit Frame Version | 10 bit spacecraft ID | 3 bit virtual channel ID | 1 bit OCF flag (CCSDS 355.0-B-2 §3.3.2.6)
+        globalMapId: U16    @< 2 bit Frame Version | 10 bit spacecraft ID | 3 bit virtual channel ID | 6 bit multiplexer access point ID (CCSDS 355.0-B-2 §3.3.2.7)
+    }
+
+    @ Verification Status returned by ProcessSecurity (CCSDS 355.0-B-2 §3.3.3.1).
+    enum VerificationStatus: U8 {
+        NO_FAILURE = 0
+        FAILURE    = 1
+    } default FAILURE
+
+    @ Result returned by ProcessSecurity (CCSDS 355.0-B-2 §3.3.3).
+    struct ProcessSecurityResult {
+        status: VerificationStatus  @< Overall result of the security verification. §3.3.3.1
+        statusCode: U8              @< §3.3.3.2 is a non-exhaustive list so we use a generic code instead of an enum
+        # payloadOffset: FwSizeType   @< Offset from the start of the input payload to the start of the first octet following the Security Header. Only valid if status == NO_FAILURE
+        # payloadSize: FwSizeType     @< Size of the payload from the offset to the ending at the last octet of the Transfer Frame Data Field. Only valid if status == NO_FAILURE
+        # payload: Fw.Buffer          @< Cleared payload slice (data field minus security header and trailer). Only valid if status == NO_FAILURE
+    }
+
+    # @ Result returned by the ProcessSecurity port (CCSDS 355.0-B-2 §3.3.3).
+    # @ returnOffset/returnSize describe the slice of the input payload that
+    # @ constitutes the ProcessSecurity Return (data field minus Security Header
+    # @ and Security Trailer). They are only meaningful when status == NO_FAILURE.
+    # struct ProcessSecurityResult {
+    #     status: VerificationStatus
+    #     statusCode: VerificationStatusCode
+    #     spi: U16
+    #     mac: Mac
+    #     transmittedSequenceNumber: U32
+    #     expectedSequenceNumber: U32
+    #     returnOffset: FwSizeType
+    #     returnSize: FwSizeType
+    # } default {
+    #     status = VerificationStatus.FAILURE
+    #     statusCode = VerificationStatusCode.INTERNAL_ERROR
+    #     returnOffset = 0
+    #     returnSize = 0
+    # }
+
+    # @ Error notification enum for the Security layer. Kept separate from
+    # @ Ccsds.FrameError so security concerns do not leak onto the generic
+    # @ framing error channel.
+    # enum SecurityError: U8 {
+    #     SEC_INVALID_SPI          = 0
+    #     SEC_MAC_FAILURE          = 1
+    #     SEC_ANTI_REPLAY_FAILURE  = 2
+    #     SEC_PADDING_ERROR        = 3
+    #     SEC_INTERNAL_ERROR       = 4
+    #     SEC_PROVIDER_UNCONNECTED = 5
+    # }
+
 }
 }

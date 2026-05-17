@@ -17,6 +17,7 @@ register_fprime_library(
     "${CMAKE_CURRENT_LIST_DIR}/TcDeframer.fpp"
   DEPENDS
     Svc_Ccsds_Types
+    Svc_Ccsds_Ports
 )
 
 register_fprime_ut(
@@ -27,6 +28,7 @@ register_fprime_ut(
     "${CMAKE_CURRENT_LIST_DIR}/TcDeframer.fpp"
   DEPENDS
     Svc_Ccsds_Types
+    Svc_Ccsds_Ports
     STest
   UT_AUTO_HELPERS
 )

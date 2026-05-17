@@ -61,6 +61,10 @@ class TcDeframer : public TcDeframerComponentBase {
     //! \param error The error to send
     void errorNotifyHelper(Svc::Ccsds::FrameError error);
 
+    //! Helper method to send a security error notification if the securityErrorNotify port is connected
+    //! \param error The status code to send
+    void securityErrorNotifyHelper(U8 statusCode);
+
   private:
     U16 m_vcId;                   //!< The virtual channel ID this deframer is configured to handle
     U16 m_spacecraftId;           //!< The spacecraft ID this deframer is configured to handle
